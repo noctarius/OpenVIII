@@ -430,7 +430,7 @@ namespace FF8
         public static void PlayMusic()
         {
             string ext = "";
-            bool bFakeLinux = false; //set to force linux behaviour on windows; To delete after Linux music playable
+            bool bFakeLinux = true; //set to force linux behaviour on windows; To delete after Linux music playable
             
             if (Memory.dicMusic[Memory.MusicIndex].Count > 0)
             {
