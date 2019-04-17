@@ -623,14 +623,31 @@ namespace FF8
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
             char[] _fccType;
 
-            public string ckid { get => new string(_ckid); }
-            public string fccType { get => new string(_fccType); }
+            public string Ckid { get => new string(_ckid).Trim('\0'); }
+            public string FccType { get => new string(_fccType).Trim('\0'); }
 
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack =1, Size =8)]
+        struct DMUS_IO_TIMESIGNATURE_ITEM
+        {
+            uint lTime;
+            byte bBeatsPerMeasure;
+            byte bBeat;
+            ushort wGridsPerBeat;
+        }
+
+        struct DMUS_IO_TEMPO_ITEM
+        {
+            uint lTime;
+            double dblTempo;
         }
 
         static DMUS_IO_SEGMENT_HEADER segh = new DMUS_IO_SEGMENT_HEADER();
         static DMUS_IO_VERSION vers = new DMUS_IO_VERSION();
+        static List<DMUS_IO_TIMESIGNATURE_ITEM> tims;
         static List<DMUS_IO_TRACK_HEADER> trkh;
+        static DMUS_IO_TEMPO_ITEM tetr;
         /// <summary>
         /// [LINUX]: This method manually reads DirectMusic Segment files
         /// </summary>
@@ -659,6 +676,7 @@ namespace FF8
         {
             string fourCc;
             trkh = new List<DMUS_IO_TRACK_HEADER>();
+            tims = new List<DMUS_IO_TIMESIGNATURE_ITEM>();
             if ((fourCc = ReadFourCc(br)) != "segh")
                 { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: Broken structure. Expected segh, got={fourCc}");return;}
             uint chunkSize = br.ReadUInt32();
@@ -695,9 +713,36 @@ namespace FF8
                 chunkSize = br.ReadUInt32();
                 long skipTell = fs.Position;
                 Console.WriteLine($"RIFF entry: {ReadFourCc(br)}/{ReadFourCc(br)}");
-                trkh.Add(MakiExtended.ByteArrayToStructure<DMUS_IO_TRACK_HEADER>(br.ReadBytes((int)br.ReadUInt32())));
-                //TODO HERE
-                //this seek below is to ensure that no critical behaviour happens and every RIFF header is read correctly
+                var trkhEntry = MakiExtended.ByteArrayToStructure<DMUS_IO_TRACK_HEADER>(br.ReadBytes((int)br.ReadUInt32()));
+                trkh.Add(trkhEntry);
+                string moduleName = string.IsNullOrEmpty(trkhEntry.Ckid) ? trkhEntry.FccType : trkhEntry.Ckid;
+                switch(moduleName.ToLower())
+                {
+                    case "cord": //Chord track list
+                        break;
+                    case "tetr": //Tempo Track Chunk =[DONE, but looks wrong]
+                        if ((fourCc = ReadFourCc(br)) != "tetr")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected tetr, got={fourCc}"); break; }
+                        uint tetrChunkSize = br.ReadUInt32();
+                        uint tetrEntrySize = br.ReadUInt32();
+                        fs.Seek(4, SeekOrigin.Current); //???
+                        tetr = MakiExtended.ByteArrayToStructure<DMUS_IO_TEMPO_ITEM>(br.ReadBytes((int)tetrEntrySize - 4));
+                        break;
+                    case "seqt": //Sequence Track Chunk
+                        break;
+                    case "tims": //Time Signature Track List  =[DONE]
+                        if ((fourCc = ReadFourCc(br)) != "tims")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected tims, got={fourCc}"); break; }
+                        uint timsChunkSize = br.ReadUInt32();
+                        uint timsEntrySize = br.ReadUInt32();
+                        for (int n = 0; n < (timsChunkSize - 4) / 2; n++)
+                            tims.Add(MakiExtended.ByteArrayToStructure<DMUS_IO_TIMESIGNATURE_ITEM>(br.ReadBytes((int)timsEntrySize)));
+                        break;
+                    case "dmbt": //??
+                        break;
+                    default:
+                        break;
+                }
                 fs.Seek(skipTell+chunkSize, SeekOrigin.Begin);
 
             }
