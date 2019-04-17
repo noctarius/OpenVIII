@@ -728,6 +728,46 @@ namespace FF8
                     Console.WriteLine("init_debugger_Audio::ReadSegmentFileManually: Critical error. No sequences read!!!");
                     return;
                 }
+#region NAudio parse test = DELETE THIS WHOLE REGION, IT'S ONLY TO TEST THE CONVERSION FROM SGT TO MID MESSAGES
+                float absTime = 0.0f;
+                NAudio.Midi.MidiOut mo = new NAudio.Midi.MidiOut(0);
+                //endof
+                //below are malformed messages, not real, don't use them as reference
+                mo.Send(new NAudio.Midi.TrackSequenceNumberEvent(0).GetAsShortMessage());
+                mo.Send(new NAudio.Midi.TempoEvent(8, 0).GetAsShortMessage());
+                mo.Send(new NAudio.Midi.ControlChangeEvent(0, 1, NAudio.Midi.MidiController.BankSelect, 1).GetAsShortMessage());
+                mo.Send(new NAudio.Midi.PatchChangeEvent(0, 1, 1).GetAsShortMessage());
+                mo.Send(new NAudio.Midi.TimeSignatureEvent(0, 4, 2, 96, 8).GetAsShortMessage());
+                mo.Send(new NAudio.Midi.ControlChangeEvent(0, 1, NAudio.Midi.MidiController.MainVolume, 90).GetAsShortMessage());
+                mo.Send(new NAudio.Midi.NoteEvent(0, 1, NAudio.Midi.MidiCommandCode.NoteOn, 50, 90).GetAsShortMessage());
+                byte lol = 1;
+                while (true)
+                {
+                    absTime += .20f;
+                    var t = seqt.Where(x => x.mtTime < absTime).ToArray(); //performance critical, for debugging only
+                    if (t.Length == 0)
+                        continue;
+                    //Console.WriteLine($"{absTime}:");
+                    //Console.WriteLine($"T: {t.Length}\tPLAYING");
+                    for(int k = 0; k<t.Length; k++)
+                    {
+                        lol = lol+1 >= 127 ? (byte)0 : lol; //lol
+                        mo.Send(new NAudio.Midi.PatchChangeEvent(0, 1, lol++).GetAsShortMessage()); //lol
+                        var c = new NAudio.Midi.NoteEvent(0, 1, NAudio.Midi.MidiCommandCode.NoteOn, t[k].bByte1, t[k].bByte2);
+                        Console.WriteLine($"{absTime}:{c}");
+                        var dr = c.GetAsShortMessage();
+                        mo.Send(dr);
+                        float localT = 0f;
+                        for (; localT < t[k].mtDuration; localT += .01f) //fake delay?
+                            ;
+                        //mo.Send(new NAudio.Midi.NoteEvent(0, 1, NAudio.Midi.MidiCommandCode.NoteOff, t[k].bByte1, t[k].bByte2).GetAsShortMessage());
+                        //mo.Send((t[k].bStatus-16 << 16) | (t[k].bByte1 << 8) | t[k].bByte2);
+                        seqt.Remove(t[k]);
+                    }
+                    if (seqt.Count == 0)
+                        break;
+                }
+#endregion
             }
         }
 
