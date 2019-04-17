@@ -11,6 +11,7 @@ using System.Runtime.InteropServices;
 using NAudio.Vorbis;
 using FFmpeg.AutoGen;
 using System.Diagnostics;
+using System.Linq;
 
 namespace FF8
 {
@@ -643,11 +644,64 @@ namespace FF8
             double dblTempo;
         }
 
+        [StructLayout(LayoutKind.Sequential, Pack =1, Size =23, CharSet = CharSet.Unicode)]
+        struct DMUS_IO_CHORD
+        {
+            [MarshalAs(UnmanagedType.ByValArray,ArraySubType = UnmanagedType.ByValTStr, SizeConst =16)] //wchars are used, therefore we need to force 2 bytes per char
+            char[] wszName;
+            uint mtTime;
+            ushort wMeasure;
+            byte bBeat;
+            byte padding;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack =1, Size =18)]
+        struct DMUS_IO_SUBCHORD
+        {
+            uint dwChordPattern;
+            uint dwScalePattern;
+            uint dwInversionPoints;
+            uint dwLevels;
+            byte bChordRoot;
+            byte bScaleRoot;
+        }
+
+        struct DMUS_IO_SEQ_ITEM
+        {
+            public uint mtTime; //EVENT TIME
+            public uint mtDuration; //DURATION OF THE EVENT
+            public uint dwPChannel;
+            public short nOffset; //Grid=Subdivision of a beat. The number of grids per beat is part of the Microsoft® DirectMusic® time signature.
+            public byte bStatus; //MIDI event type
+            public byte bByte1; //1st MIDI data
+            public byte bByte2; //2nd MIDI data
+        }
+
+        struct DMUS_IO_CURVE_ITEM
+        {
+            uint mtStart;
+            uint mtDuration;
+            uint mtResetDuration;
+            uint dwPChannel;
+            short nOffset;
+            short nStartValue;
+            short nEndValue;
+            short nResetValue;
+            byte bType;
+            byte bCurveShape;
+            byte bCCData;
+            byte bFlags;
+        }
+
         static DMUS_IO_SEGMENT_HEADER segh = new DMUS_IO_SEGMENT_HEADER();
         static DMUS_IO_VERSION vers = new DMUS_IO_VERSION();
         static List<DMUS_IO_TIMESIGNATURE_ITEM> tims;
         static List<DMUS_IO_TRACK_HEADER> trkh;
         static DMUS_IO_TEMPO_ITEM tetr;
+        static DMUS_IO_CHORD crdh;
+        static List<DMUS_IO_SUBCHORD> crdb;
+        static List<DMUS_IO_SEQ_ITEM> seqt;
+        static List<DMUS_IO_CURVE_ITEM> curl;
         /// <summary>
         /// [LINUX]: This method manually reads DirectMusic Segment files
         /// </summary>
@@ -669,6 +723,11 @@ namespace FF8
                     return;
                 }
                 ReadSegmentForm(fs, br);
+                if(seqt == null)
+                {
+                    Console.WriteLine("init_debugger_Audio::ReadSegmentFileManually: Critical error. No sequences read!!!");
+                    return;
+                }
             }
         }
 
@@ -677,6 +736,9 @@ namespace FF8
             string fourCc;
             trkh = new List<DMUS_IO_TRACK_HEADER>();
             tims = new List<DMUS_IO_TIMESIGNATURE_ITEM>();
+            crdb = new List<DMUS_IO_SUBCHORD>();
+            seqt = new List<DMUS_IO_SEQ_ITEM>();
+            curl = new List<DMUS_IO_CURVE_ITEM>();
             if ((fourCc = ReadFourCc(br)) != "segh")
                 { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: Broken structure. Expected segh, got={fourCc}");return;}
             uint chunkSize = br.ReadUInt32();
@@ -718,7 +780,26 @@ namespace FF8
                 string moduleName = string.IsNullOrEmpty(trkhEntry.Ckid) ? trkhEntry.FccType : trkhEntry.Ckid;
                 switch(moduleName.ToLower())
                 {
-                    case "cord": //Chord track list
+                    case "cord": //Chord track list =[DONE]
+                        if ((fourCc = ReadFourCc(br)) != "LIST")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected LIST, got={fourCc}"); break; }
+                        uint cordListChunkSize = br.ReadUInt32();
+                        if ((fourCc = ReadFourCc(br)) != "cord")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected cord, got={fourCc}"); break; }
+                        if ((fourCc = ReadFourCc(br)) != "crdh")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected crdh, got={fourCc}"); break; }
+                        fs.Seek(4, SeekOrigin.Current); //crdh size. It's always one DWORD, so...
+                        uint crdhDword = br.ReadUInt32();
+                        byte crdhRoot = (byte)(crdhDword >> 24);
+                        uint crdhScale = crdhDword & 0xFFFFFF;
+                        if ((fourCc = ReadFourCc(br)) != "crdb")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected crdb, got={fourCc}"); break; }
+                        uint crdbChunkSize = br.ReadUInt32();
+                        crdh = MakiExtended.ByteArrayToStructure<DMUS_IO_CHORD>(br.ReadBytes((int)br.ReadUInt32()));
+                        uint cSubChords = br.ReadUInt32();
+                        uint subChordSize = br.ReadUInt32();
+                        for(int k = 0; k<cSubChords; k++)
+                            crdb.Add(MakiExtended.ByteArrayToStructure<DMUS_IO_SUBCHORD>(br.ReadBytes((int)subChordSize)));
                         break;
                     case "tetr": //Tempo Track Chunk =[DONE, but looks wrong]
                         if ((fourCc = ReadFourCc(br)) != "tetr")
@@ -729,6 +810,23 @@ namespace FF8
                         tetr = MakiExtended.ByteArrayToStructure<DMUS_IO_TEMPO_ITEM>(br.ReadBytes((int)tetrEntrySize - 4));
                         break;
                     case "seqt": //Sequence Track Chunk
+                        if ((fourCc = ReadFourCc(br)) != "seqt")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected seqt, got={fourCc}"); break; }
+                        uint seqtChunkSize = br.ReadUInt32();
+                        if ((fourCc = ReadFourCc(br)) != "evtl")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected evtl, got={fourCc}"); break; }
+                        uint evtlChunkSize = br.ReadUInt32();
+                        uint sequenceItemSize = br.ReadUInt32();
+                        uint sequenceItemsCount = (evtlChunkSize - 4) / sequenceItemSize;
+                        for (int k = 0; k < sequenceItemsCount; k++)
+                            seqt.Add(MakiExtended.ByteArrayToStructure<DMUS_IO_SEQ_ITEM>(br.ReadBytes((int)sequenceItemSize)));
+                        if ((fourCc = ReadFourCc(br)) != "curl")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected curl, got={fourCc}"); break; }
+                        uint curlChunkSize = br.ReadUInt32();
+                        uint curveItemSize = br.ReadUInt32();
+                        uint curvesItemCount = (curlChunkSize - 4) / curveItemSize;
+                        for (int k = 0; k < curvesItemCount; k++)
+                            curl.Add(MakiExtended.ByteArrayToStructure<DMUS_IO_CURVE_ITEM>(br.ReadBytes((int)curveItemSize)));
                         break;
                     case "tims": //Time Signature Track List  =[DONE]
                         if ((fourCc = ReadFourCc(br)) != "tims")
