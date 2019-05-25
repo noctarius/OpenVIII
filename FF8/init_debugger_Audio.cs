@@ -31,6 +31,32 @@ namespace FF8
         private static CInstrument[] instruments;
 #endif
 
+#if _X64 && _WINDOWS
+        [DllImport("x64/libfluidsynth-2.dll")]
+        public static extern IntPtr new_fluid_settings();
+
+        [DllImport("x64/libfluidsynth-2.dll")]
+        public static extern IntPtr new_fluid_synth(IntPtr settings);
+
+        [DllImport("x64/libfluidsynth-2.dll")]
+        public static extern IntPtr new_fluid_player(IntPtr synth);
+
+        [DllImport("x64/libfluidsynth-2.dll")]
+        public static extern IntPtr new_fluid_audio_driver(IntPtr settings, IntPtr synth);
+
+        [DllImport("x64/libfluidsynth-2.dll")]
+        public static extern int fluid_player_play(IntPtr player);
+
+        [DllImport("x64/libfluidsynth-2.dll")]
+        public static extern int fluid_player_join(IntPtr player);
+
+        [DllImport("x64/libfluidsynth-2.dll")]
+        public static extern int fluid_player_add(IntPtr player, string mid);
+
+        [DllImport("x64/libfluidsynth-2.dll")]
+        public static extern int fluid_synth_sfload(IntPtr synth, string sf2, int reset_presets);
+#endif
+
         private static byte[] getBytes(object aux)
         {
             int length = Marshal.SizeOf(aux);
@@ -431,7 +457,7 @@ namespace FF8
         public static void PlayMusic()
         {
             string ext = "";
-            bool bFakeLinux = true; //set to force linux behaviour on windows; To delete after Linux music playable
+            bool bFakeLinux = false; //set to force linux behaviour on windows; To delete after Linux music playable
             
             if (Memory.dicMusic[Memory.MusicIndex].Count > 0)
             {
@@ -458,6 +484,14 @@ namespace FF8
                     }
                     if (!MakiExtended.IsLinux)
                     {
+                        IntPtr settings = new_fluid_settings();
+                        IntPtr synth = new_fluid_synth(settings);
+                        IntPtr player = new_fluid_player(synth);
+                        IntPtr adriver = new_fluid_audio_driver(settings, synth);
+                        fluid_synth_sfload(synth, "D:\\midi\\muse.sf2", 1); //debug test
+                        fluid_player_add(player, "D:\\midi\\blue.mid"); //just testing
+                        fluid_player_play(player);
+                        fluid_player_join(player);
 #if _WINDOWS && !_X64
                         if (cdm == null)
                         {
@@ -728,46 +762,6 @@ namespace FF8
                     Console.WriteLine("init_debugger_Audio::ReadSegmentFileManually: Critical error. No sequences read!!!");
                     return;
                 }
-#region NAudio parse test = DELETE THIS WHOLE REGION, IT'S ONLY TO TEST THE CONVERSION FROM SGT TO MID MESSAGES
-                float absTime = 0.0f;
-                NAudio.Midi.MidiOut mo = new NAudio.Midi.MidiOut(0);
-                //endof
-                //below are malformed messages, not real, don't use them as reference
-                mo.Send(new NAudio.Midi.TrackSequenceNumberEvent(0).GetAsShortMessage());
-                mo.Send(new NAudio.Midi.TempoEvent(8, 0).GetAsShortMessage());
-                mo.Send(new NAudio.Midi.ControlChangeEvent(0, 1, NAudio.Midi.MidiController.BankSelect, 1).GetAsShortMessage());
-                mo.Send(new NAudio.Midi.PatchChangeEvent(0, 1, 1).GetAsShortMessage());
-                mo.Send(new NAudio.Midi.TimeSignatureEvent(0, 4, 2, 96, 8).GetAsShortMessage());
-                mo.Send(new NAudio.Midi.ControlChangeEvent(0, 1, NAudio.Midi.MidiController.MainVolume, 90).GetAsShortMessage());
-                mo.Send(new NAudio.Midi.NoteEvent(0, 1, NAudio.Midi.MidiCommandCode.NoteOn, 50, 90).GetAsShortMessage());
-                byte lol = 1;
-                while (true)
-                {
-                    absTime += .20f;
-                    var t = seqt.Where(x => x.mtTime < absTime).ToArray(); //performance critical, for debugging only
-                    if (t.Length == 0)
-                        continue;
-                    //Console.WriteLine($"{absTime}:");
-                    //Console.WriteLine($"T: {t.Length}\tPLAYING");
-                    for(int k = 0; k<t.Length; k++)
-                    {
-                        lol = lol+1 >= 127 ? (byte)0 : lol; //lol
-                        mo.Send(new NAudio.Midi.PatchChangeEvent(0, 1, lol++).GetAsShortMessage()); //lol
-                        var c = new NAudio.Midi.NoteEvent(0, 1, NAudio.Midi.MidiCommandCode.NoteOn, t[k].bByte1, t[k].bByte2);
-                        Console.WriteLine($"{absTime}:{c}");
-                        var dr = c.GetAsShortMessage();
-                        mo.Send(dr);
-                        float localT = 0f;
-                        for (; localT < t[k].mtDuration; localT += .01f) //fake delay?
-                            ;
-                        //mo.Send(new NAudio.Midi.NoteEvent(0, 1, NAudio.Midi.MidiCommandCode.NoteOff, t[k].bByte1, t[k].bByte2).GetAsShortMessage());
-                        //mo.Send((t[k].bStatus-16 << 16) | (t[k].bByte1 << 8) | t[k].bByte2);
-                        seqt.Remove(t[k]);
-                    }
-                    if (seqt.Count == 0)
-                        break;
-                }
-#endregion
             }
         }
 
