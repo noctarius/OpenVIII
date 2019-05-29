@@ -30,30 +30,35 @@ namespace FF8
         private static CCollection ccollection;
         private static CInstrument[] instruments;
 #endif
+#if _WINDOWS
+        private const string fluidLibName = "x64/libfluidsynth-2.dll";
+#else
+        private const string fluidLibName = "x64/libfluidsynth-2.so";
+#endif
 
-#if _X64 && _WINDOWS
-        [DllImport("x64/libfluidsynth-2.dll")]
+#if _X64
+        [DllImport(fluidLibName)]
         public static extern IntPtr new_fluid_settings();
 
-        [DllImport("x64/libfluidsynth-2.dll")]
+        [DllImport(fluidLibName)]
         public static extern IntPtr new_fluid_synth(IntPtr settings);
 
-        [DllImport("x64/libfluidsynth-2.dll")]
+        [DllImport(fluidLibName)]
         public static extern IntPtr new_fluid_player(IntPtr synth);
 
-        [DllImport("x64/libfluidsynth-2.dll")]
+        [DllImport(fluidLibName)]
         public static extern IntPtr new_fluid_audio_driver(IntPtr settings, IntPtr synth);
 
-        [DllImport("x64/libfluidsynth-2.dll")]
+        [DllImport(fluidLibName)]
         public static extern int fluid_player_play(IntPtr player);
 
-        [DllImport("x64/libfluidsynth-2.dll")]
+        [DllImport(fluidLibName)]
         public static extern int fluid_player_join(IntPtr player);
 
-        [DllImport("x64/libfluidsynth-2.dll")]
+        [DllImport(fluidLibName)]
         public static extern int fluid_player_add(IntPtr player, string mid);
 
-        [DllImport("x64/libfluidsynth-2.dll")]
+        [DllImport(fluidLibName)]
         public static extern int fluid_synth_sfload(IntPtr synth, string sf2, int reset_presets);
 #endif
 
@@ -480,16 +485,15 @@ namespace FF8
                     if(MakiExtended.IsLinux || bFakeLinux)
                     {
                         ReadSegmentFileManually(pt);
-                        break;
                     }
-                    if (!MakiExtended.IsLinux)
+                    if (MakiExtended.IsLinux)
                     {
                         IntPtr settings = new_fluid_settings();
                         IntPtr synth = new_fluid_synth(settings);
                         IntPtr player = new_fluid_player(synth);
                         IntPtr adriver = new_fluid_audio_driver(settings, synth);
-                        fluid_synth_sfload(synth, "D:\\midi\\muse.sf2", 1); //debug test
-                        fluid_player_add(player, "D:\\midi\\blue.mid"); //just testing
+                        fluid_synth_sfload(synth, "/home/griever/GS.sf2", 1); //debug test
+                        fluid_player_add(player, "/home/griever/clairdelune.mid"); //just testing
                         fluid_player_play(player);
                         fluid_player_join(player);
 #if _WINDOWS && !_X64
