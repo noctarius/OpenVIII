@@ -60,6 +60,9 @@ namespace FF8
 
         [DllImport(fluidLibName)]
         public static extern int fluid_synth_sfload(IntPtr synth, string sf2, int reset_presets);
+
+        [DllImport(fluidLibName)]
+        public static extern int fluid_settings_setstr(IntPtr settings, string name, string str);
 #endif
 
         private static byte[] getBytes(object aux)
@@ -489,6 +492,7 @@ namespace FF8
                     if (MakiExtended.IsLinux)
                     {
                         IntPtr settings = new_fluid_settings();
+                        fluid_settings_setstr(settings, "audio.driver", "alsa");
                         IntPtr synth = new_fluid_synth(settings);
                         IntPtr player = new_fluid_player(synth);
                         IntPtr adriver = new_fluid_audio_driver(settings, synth);
