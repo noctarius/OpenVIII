@@ -63,6 +63,12 @@ namespace FF8
 
         [DllImport(fluidLibName)]
         public static extern int fluid_settings_setstr(IntPtr settings, string name, string str);
+
+        [DllImport(fluidLibName)]
+        public static extern int fluid_synth_noteon(IntPtr synth, int channel, int key, int velocity);
+
+        [DllImport(fluidLibName)]
+        public static extern int fluid_synth_noteoff(IntPtr synth, int channel, int key);
 #endif
 
         private static byte[] getBytes(object aux)
@@ -497,9 +503,18 @@ namespace FF8
                         IntPtr player = new_fluid_player(synth);
                         IntPtr adriver = new_fluid_audio_driver(settings, synth);
                         fluid_synth_sfload(synth, "/home/griever/GS.sf2", 1); //debug test
-                        fluid_player_add(player, "/home/griever/clairdelune.mid"); //just testing
-                        fluid_player_play(player);
-                        fluid_player_join(player);
+                        //fluid_player_add(player, "/home/griever/clairdelune.mid"); //just testing
+                        //fluid_player_play(player);
+                        //fluid_player_join(player);
+                        for (int i = 0; i < 127; i++)
+                        {
+                            System.Threading.Thread.Sleep(25);
+                            fluid_synth_noteon(synth, 0, i, 100);
+                            System.Threading.Thread.Sleep(25);
+                            fluid_synth_noteoff(synth, 0, i);
+                        }
+
+
 #if _WINDOWS && !_X64
                         if (cdm == null)
                         {
