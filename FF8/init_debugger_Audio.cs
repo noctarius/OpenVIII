@@ -472,7 +472,6 @@ namespace FF8
         {
             string ext = "";
             bool bFakeLinux = false; //set to force linux behaviour on windows; To delete after Linux music playable
-            
             if (Memory.dicMusic[Memory.MusicIndex].Count > 0)
             {
                 ext = Path.GetExtension(Memory.dicMusic[Memory.MusicIndex][0]).ToLower();
@@ -502,16 +501,20 @@ namespace FF8
                         IntPtr synth = new_fluid_synth(settings);
                         IntPtr player = new_fluid_player(synth);
                         IntPtr adriver = new_fluid_audio_driver(settings, synth);
-                        fluid_synth_sfload(synth, "/home/griever/GS.sf2", 1); //debug test
-                        //fluid_player_add(player, "/home/griever/clairdelune.mid"); //just testing
-                        //fluid_player_play(player);
+                        string dlsPath = Path.Combine(Path.GetDirectoryName(pt), "FF8.dls");
+                        if (!File.Exists(dlsPath))
+                            throw new Exception($"FF8.dls not found at: {dlsPath}");
+
+
+                        int sfLoad = fluid_synth_sfload(synth, dlsPath, 1); //debug test
+
+                        //int playeradd = fluid_player_add(player, "/home/griever/clairdelune.mid"); //just testing
+                        //int playerplay = fluid_player_play(player);
                         //fluid_player_join(player);
-                        for (int i = 0; i < 127; i++)
+                        for (int i = 0; i < seqt.Count; i++)
                         {
-                            System.Threading.Thread.Sleep(25);
-                            fluid_synth_noteon(synth, 0, i, 100);
-                            System.Threading.Thread.Sleep(25);
-                            fluid_synth_noteoff(synth, 0, i);
+                            fluid_synth_noteon(synth, (int)seqt[i].dwPChannel, seqt[i].bByte1, seqt[i].bByte2);
+                            System.Threading.Thread.Sleep(75);
                         }
 
 
