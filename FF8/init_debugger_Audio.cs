@@ -106,6 +106,12 @@ namespace FF8
 
         [DllImport(fluidLibName)]
         public static extern int fluid_synth_bank_select(IntPtr synth, int channel, int bank);
+
+        [DllImport(fluidLibName)]
+        public static extern int fluid_synth_program_change(IntPtr synth, int channel, int prog);
+
+        [DllImport(fluidLibName)]
+        public static extern int fluid_synth_program_reset(IntPtr synth);
 #endif
 
         private static byte[] getBytes(object aux)
@@ -431,7 +437,8 @@ namespace FF8
         private static void FluidWorket_SetBanks()
         {
             for(int i = 0; i<lbinbins.Count; i++)
-                fluid_synth_bank_select(synth, (int)lbinbins[0].dwPChannel, (int)lbinbins[0].dwPatch);
+                fluid_synth_program_change(synth, (int)lbinbins[0].dwPChannel, (int)lbinbins[0].dwPatch);
+            //int reseter = fluid_synth_program_reset(synth);
         }
 
         private static void FluidWorket_SetTempo()
