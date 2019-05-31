@@ -20,6 +20,37 @@ namespace FF8
     internal static class init_debugger_Audio
 #pragma warning restore IDE1006 // Naming Styles
     {
+        private static IntPtr driver;
+        private static IntPtr synth;
+        private static IntPtr settings;
+        enum ThreadFluidState
+        {
+            /// <summary>
+            /// Idle means player is ready for new action. Either it finished playing or was never run
+            /// </summary>
+            idle,
+            /// <summary>
+            /// Playing means the player is actively running the sequence and working with synthesizer. Every kind of seeking and music handling is automatic
+            /// </summary>
+            playing,
+            /// <summary>
+            /// Paused actually makes it possible to pause the sequencer in place. Change to running to continue playing
+            /// </summary>
+            paused,
+            /// <summary>
+            /// Reset stops playing, clears the sequence and all related helpers and falls back into idle mode
+            /// </summary>
+            reset,
+            /// <summary>
+            /// New song is a special state, where it does the resetting, idle and then goes into playing state. You should always set state to newSong when you point to new music collection.
+            /// </summary>
+            newSong,
+            /// <summary>
+            /// Call only at the very exit of application. This resets and aborts the thread
+            /// </summary>
+            kill
+        }
+        private static ThreadFluidState fluidState;
 #if _WINDOWS && !_X64
         private static CDirectMusic cdm;
         private static CDLSLoader loader;
@@ -69,6 +100,12 @@ namespace FF8
 
         [DllImport(fluidLibName)]
         public static extern int fluid_synth_noteoff(IntPtr synth, int channel, int key);
+
+        [DllImport(fluidLibName)]
+        public static extern int fluid_synth_all_notes_off(IntPtr synth, int channel);
+
+        [DllImport(fluidLibName)]
+        public static extern int fluid_synth_bank_select(IntPtr synth, int channel, int bank);
 #endif
 
         private static byte[] getBytes(object aux)
@@ -322,7 +359,125 @@ namespace FF8
                     }
                 }
             }
+            settings = new_fluid_settings();
+#if !_WINDOWS
+            fluid_settings_setstr(settings, "audio.driver", "alsa");
+#endif
+            synth = new_fluid_synth(settings);
+            driver = new_fluid_audio_driver(settings, synth);
+            string dlsPath = Path.Combine(Path.GetDirectoryName(music_pt), "FF8.dls");
+            fluid_synth_sfload(synth, dlsPath, 1);
+            GCHandle.Alloc(settings, GCHandleType.Pinned);
+            GCHandle.Alloc(synth, GCHandleType.Pinned);
+            GCHandle.Alloc(driver, GCHandleType.Pinned);
+            System.Threading.Thread fluidThread = new System.Threading.Thread(new System.Threading.ThreadStart(FluidWorker));
+            fluidThread.Start();
         }
+
+
+        private struct fluidThreadKey
+        {
+            public int channel;
+            public int key;
+            public double time;
+
+        }
+        private static double fluidWorkerAbsTime;
+        private static int fluidCurrentIndex;
+        private static List<fluidThreadKey> fluidThreadKeys;
+        private const int fluidTimeFrame = 1; //test
+        private static float fluidDivider = 1000f; //test
+        static void FluidWorker()
+        {
+            while (true)
+            {
+                switch (fluidState)
+                {
+                    //we are in the idle mode. We do nothing.
+                    case ThreadFluidState.idle:
+                        continue;
+
+                        //This is almost the same as idle, but the paused mode is never meant to be destroyed or ignored. In idle mode the engine thinks the player has no song loaded and is available.
+                    case ThreadFluidState.paused:
+                        continue;
+
+                        //We received the reset state. We have to clear all lists and helpers that were used for playing music.
+                    case ThreadFluidState.reset:
+                        FluidWorker_Reset();
+                        fluidState = ThreadFluidState.idle;
+                        continue;
+
+                    //We received the newSong state. We are resetting as in reset, but in the end we fall into playing
+                    case ThreadFluidState.newSong:
+                        FluidWorker_Reset();
+                        FluidWorket_SetTempo();
+                        FluidWorket_SetBanks();
+                        fluidState = ThreadFluidState.playing;
+                        continue;
+
+                    //The most important state- it handles the real-time transmission to synth driver
+                    case ThreadFluidState.playing:
+                        UpdateMusic();
+                        continue;
+
+                    case ThreadFluidState.kill:
+                        FluidWorker_Reset();
+                        System.Threading.Thread.CurrentThread.Abort();
+                        break;
+                }
+            }
+        }
+
+        private static void FluidWorket_SetBanks()
+        {
+            for(int i = 0; i<lbinbins.Count; i++)
+                fluid_synth_bank_select(synth, (int)lbinbins[0].dwPChannel, (int)lbinbins[0].dwPatch);
+        }
+
+        private static void FluidWorket_SetTempo()
+        {
+            fluidDivider = (float)(150f * tetr.dblTempo);
+        }
+
+        /// <summary>
+        /// THREAD: Updates the music. seqt[i] are sorted by absTime. We store the fluidCurrentIndex and check for absTime via one If. If it proceeds
+        /// it puts the key into list for duration and increments the fluidCurrentIndex. If nothing, then depletes the duration time in key list (if any)
+        /// and then absTime is the only that gets incremented.
+        /// </summary>
+        private static void UpdateMusic()
+        {
+            if (fluidCurrentIndex >= seqt.Count - 1)
+                fluidState = ThreadFluidState.idle;
+            var key = seqt[fluidCurrentIndex];
+            if(fluidWorkerAbsTime>=key.mtTime)
+            {
+                fluidThreadKeys.Add(new fluidThreadKey() { channel = (int)key.dwPChannel, key = key.bByte1, time = (int)key.mtDuration });
+                fluid_synth_noteon(synth, (int)key.dwPChannel, key.bByte1, key.bByte2);
+                Console.WriteLine($"fluid_synth_noteon: {key.dwPChannel}, {key.bByte1}, {key.bByte2}");
+                fluidCurrentIndex++;
+            }
+            //BELOW COMMENTED CODE IS AWFUL OPTIMALIZED- Change to array with count of channels and then simply put the data in there
+            //for (int i = fluidThreadKeys.Count; i > 0; i--) //we need to reverse the loop, because we are deleting items in list and incrementing on it
+                //if (fluidThreadKeys[i-1].time < 0)
+                //{
+                //    fluid_synth_noteoff(synth, fluidThreadKeys[i-1].channel, fluidThreadKeys[i-1].key);
+                //Console.WriteLine($"fluid_synth_noteoff: {fluidThreadKeys[i - 1].channel}, {fluidThreadKeys[i - 1].key}");
+                //    fluidThreadKeys.Remove(fluidThreadKeys[i-1]);
+                //}
+                //else
+                    //fluidThreadKeys[i-1] = new fluidThreadKey() { channel = fluidThreadKeys[i-1].channel, key = fluidThreadKeys[i-1].key, time = fluidThreadKeys[i-1].time - fluidTimeFrame/ (fluidDivider*2f) };
+           
+             fluidWorkerAbsTime += fluidTimeFrame/fluidDivider;
+
+        }
+
+        private static void FluidWorker_Reset()
+        {
+            fluidThreadKeys = new List<fluidThreadKey>();
+            fluidWorkerAbsTime = 0;
+            fluidCurrentIndex = 0;
+        }
+
 
         //I messed around here as figuring out how things worked probably didn't need to mess with this.
         internal static void DEBUG_SoundAudio()
@@ -492,102 +647,14 @@ namespace FF8
                 case ".sgt":
                     if(MakiExtended.IsLinux || bFakeLinux)
                     {
+                        fluidState = ThreadFluidState.reset;
+                        while (fluidState != ThreadFluidState.idle)
+                            ; //we are waiting for reset end on fluidThread
                         ReadSegmentFileManually(pt);
                     }
                     if (MakiExtended.IsLinux)
                     {
-                        IntPtr settings = new_fluid_settings();
-                        fluid_settings_setstr(settings, "audio.driver", "alsa");
-                        IntPtr synth = new_fluid_synth(settings);
-                        IntPtr player = new_fluid_player(synth);
-                        IntPtr adriver = new_fluid_audio_driver(settings, synth);
-                        string dlsPath = Path.Combine(Path.GetDirectoryName(pt), "FF8.dls");
-                        if (!File.Exists(dlsPath))
-                            throw new Exception($"FF8.dls not found at: {dlsPath}");
-
-
-                        int sfLoad = fluid_synth_sfload(synth, dlsPath, 1); //debug test
-
-                        //int playeradd = fluid_player_add(player, "/home/griever/clairdelune.mid"); //just testing
-                        //int playerplay = fluid_player_play(player);
-                        //fluid_player_join(player);
-                        for (int i = 0; i < seqt.Count; i++)
-                        {
-                            fluid_synth_noteon(synth, (int)seqt[i].dwPChannel, seqt[i].bByte1, seqt[i].bByte2);
-                            System.Threading.Thread.Sleep(75);
-                        }
-
-
-#if _WINDOWS && !_X64
-                        if (cdm == null)
-                        {
-                            cdm = new CDirectMusic();
-                            cdm.Initialize();
-                            loader = new CDLSLoader();
-                            loader.Initialize();
-                            loader.LoadSegment(pt, out segment);
-                            ccollection = new CCollection();
-                            string pathDLS = Path.Combine(Memory.FF8DIR, "../Music/dmusic_backup/FF8.dls");
-                            if (!File.Exists(pathDLS))
-                            {
-                                pathDLS = Path.Combine(Memory.FF8DIR, "../Music/dmusic/FF8.dls");
-                            }
-
-                            loader.LoadDLS(pathDLS, out ccollection);
-                            uint dwInstrumentIndex = 0;
-                            while (ccollection.EnumInstrument(++dwInstrumentIndex, out INSTRUMENTINFO iInfo) == S_OK)
-                            {
-                                Debug.WriteLine(iInfo.szInstName);
-                            }
-                            instruments = new CInstrument[dwInstrumentIndex];
-
-                            path = new CAPathPerformance();
-                            path.Initialize(cdm, null, null, DMUS_APATH.DYNAMIC_3D, 128);
-                            cport = new CPortPerformance();
-                            cport.Initialize(cdm, null, null);
-                            outport = new COutputPort();
-                            outport.Initialize(cdm);
-
-                            uint dwPortCount = 0;
-                            INFOPORT infoport;
-                            do
-                            {
-                                outport.GetPortInfo(++dwPortCount, out infoport);
-                            }
-                            while ((infoport.dwFlags & DMUS_PC.SOFTWARESYNTH) == 0);
-
-                            outport.SetPortParams(0, 0, 0, SET.REVERB | SET.CHORUS, 44100);
-                            outport.ActivatePort(infoport);
-
-                            cport.AddPort(outport, 0, 1);
-
-                            for (int i = 0; i < dwInstrumentIndex; i++)
-                            {
-                                ccollection.GetInstrument(out instruments[i], i);
-                                outport.DownloadInstrument(instruments[i]);
-                            }
-                            segment.Download(cport);
-                            cport.PlaySegment(segment);
-                        }
-                        else
-                        {
-                            cport.Stop(segment);
-                            segment.Dispose();
-                            //segment.ConnectToDLS
-                            loader.LoadSegment(pt, out segment);
-                            segment.Download(cport);
-                            cport.PlaySegment(segment);
-                            cdm.Dispose();
-                        }
-
-                        //GCHandle.Alloc(cdm, GCHandleType.Pinned);
-                        //GCHandle.Alloc(loader, GCHandleType.Pinned);
-                        //GCHandle.Alloc(segment, GCHandleType.Pinned);
-                        //GCHandle.Alloc(path, GCHandleType.Pinned);
-                        //GCHandle.Alloc(cport, GCHandleType.Pinned);
-                        //GCHandle.Alloc(outport, GCHandleType.Pinned);
-                        //GCHandle.Alloc(infoport, GCHandleType.Pinned);
-#endif
+                        SynthPlay();
                     }
                     
                     break;
@@ -597,6 +664,10 @@ namespace FF8
             lastplayed = Memory.MusicIndex;
         }
 
+        private static void SynthPlay()
+        {
+            fluidState = ThreadFluidState.newSong;
+        }
 
         public static void KillAudio()
         {
@@ -604,6 +675,8 @@ namespace FF8
             //{
             //    Sound.Dispose();
             //}
+            fluidState = ThreadFluidState.kill;
+            
             for (int i = 0; i < MaxSoundChannels; i++)
             {
                 if (SoundChannels[i] != null && !SoundChannels[i].isDisposed)
@@ -641,6 +714,10 @@ namespace FF8
                 ffccMusic.Dispose();
                 ffccMusic = null;
             }
+            fluid_synth_all_notes_off(synth, -1);
+            fluidState = ThreadFluidState.idle;
+
+
 
 #if _WINDOWS && !_X64
             try
@@ -700,8 +777,8 @@ namespace FF8
 
         struct DMUS_IO_TEMPO_ITEM
         {
-            uint lTime;
-            double dblTempo;
+            public int lTime;
+            public double dblTempo;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack =1, Size =23, CharSet = CharSet.Unicode)]
@@ -753,6 +830,22 @@ namespace FF8
             byte bFlags;
         }
 
+        [StructLayout(LayoutKind.Sequential, Pack =1, Size =42)]
+        struct DMUS_IO_INSTRUMENT
+        {
+            public uint dwPatch;
+            uint dwAssignPatch;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst =4)]
+            uint[] dwNoteRanges;
+            public uint dwPChannel;
+            uint dwFlags;
+            byte bPan;
+            byte bVolume;
+            short nTranspose;
+            uint dwChannelPriority;
+            short nPitchBendRange;
+        }
+
         static DMUS_IO_SEGMENT_HEADER segh = new DMUS_IO_SEGMENT_HEADER();
         static DMUS_IO_VERSION vers = new DMUS_IO_VERSION();
         static List<DMUS_IO_TIMESIGNATURE_ITEM> tims;
@@ -762,6 +855,7 @@ namespace FF8
         static List<DMUS_IO_SUBCHORD> crdb;
         static List<DMUS_IO_SEQ_ITEM> seqt;
         static List<DMUS_IO_CURVE_ITEM> curl;
+        static List<DMUS_IO_INSTRUMENT> lbinbins;
         /// <summary>
         /// [LINUX]: This method manually reads DirectMusic Segment files
         /// </summary>
@@ -799,6 +893,7 @@ namespace FF8
             crdb = new List<DMUS_IO_SUBCHORD>();
             seqt = new List<DMUS_IO_SEQ_ITEM>();
             curl = new List<DMUS_IO_CURVE_ITEM>();
+            lbinbins = new List<DMUS_IO_INSTRUMENT>();
             if ((fourCc = ReadFourCc(br)) != "segh")
                 { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: Broken structure. Expected segh, got={fourCc}");return;}
             uint chunkSize = br.ReadUInt32();
@@ -861,13 +956,18 @@ namespace FF8
                         for(int k = 0; k<cSubChords; k++)
                             crdb.Add(MakiExtended.ByteArrayToStructure<DMUS_IO_SUBCHORD>(br.ReadBytes((int)subChordSize)));
                         break;
-                    case "tetr": //Tempo Track Chunk =[DONE, but looks wrong]
+                    case "tetr":
                         if ((fourCc = ReadFourCc(br)) != "tetr")
                         { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected tetr, got={fourCc}"); break; }
                         uint tetrChunkSize = br.ReadUInt32();
                         uint tetrEntrySize = br.ReadUInt32();
                         fs.Seek(4, SeekOrigin.Current); //???
                         tetr = MakiExtended.ByteArrayToStructure<DMUS_IO_TEMPO_ITEM>(br.ReadBytes((int)tetrEntrySize - 4));
+                        byte[] doubleBuffer = BitConverter.GetBytes(tetr.dblTempo);
+                        byte[] newDoubleBUffer = new byte[8];
+                        Array.Copy(doubleBuffer, 4, newDoubleBUffer, 0, 4);
+                        Array.Copy(doubleBuffer, 0, newDoubleBUffer, 4, 4);
+                        tetr.dblTempo = BitConverter.ToDouble(newDoubleBUffer, 0);
                         break;
                     case "seqt": //Sequence Track Chunk
                         if ((fourCc = ReadFourCc(br)) != "seqt")
@@ -896,7 +996,73 @@ namespace FF8
                         for (int n = 0; n < (timsChunkSize - 4) / 2; n++)
                             tims.Add(MakiExtended.ByteArrayToStructure<DMUS_IO_TIMESIGNATURE_ITEM>(br.ReadBytes((int)timsEntrySize)));
                         break;
-                    case "dmbt": //??
+                    case "dmbt": //Band segment
+                        fs.Seek(12, SeekOrigin.Current); //We are skipping RIFF and the segment size. Useless for us
+                        if ((fourCc = ReadFourCc(br)) != "LIST")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected LIST, got={fourCc}"); break; }
+                        uint lbdlChunkSize = br.ReadUInt32();
+                        if ((fourCc = ReadFourCc(br)) != "lbdl")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected lbdl, got={fourCc}"); break; }
+                        if ((fourCc = ReadFourCc(br)) != "LIST")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected LIST, got={fourCc}"); break; }
+                        _ = br.ReadUInt32();
+                        if ((fourCc = ReadFourCc(br)) != "lbnd")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected lbnd, got={fourCc}"); break; }
+                        if ((fourCc = ReadFourCc(br)) != "bdih")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected bdih, got={fourCc}"); break; }
+                        fs.Seek(br.ReadUInt32(), SeekOrigin.Current);
+                        if ((fourCc = ReadFourCc(br)) != "RIFF")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected RIFF, got={fourCc}"); break; }
+                        _ = br.ReadUInt32();
+
+
+                        //Band SEGMENT
+                        if ((fourCc = ReadFourCc(br)) != "DMBD")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected DMBD, got={fourCc}"); break; }
+                        if ((fourCc = ReadFourCc(br)) != "guid")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected guid, got={fourCc}"); break; }
+                        fs.Seek(br.ReadUInt32(), SeekOrigin.Current); //No one cares for guid
+
+                        if ((fourCc = ReadFourCc(br)) != "LIST")
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected LIST, got={fourCc}"); break; }
+                        fs.Seek(br.ReadUInt32()+4, SeekOrigin.Current); //we skip the UNFOunam, we don't care for this too
+                        uint lbilSegmentSize = br.ReadUInt32();
+                        byte[] lbilSegment = br.ReadBytes((int)lbilSegmentSize);
+
+                        //now the list is varied- therefore we need to work on the segment and iterate. Let's create memorystream from memory buffer of segment
+                        using (MemoryStream msB = new MemoryStream(lbilSegment))
+                        using (BinaryReader brB = new BinaryReader(msB))
+                        {
+                            if (msB.Position == msB.Length)
+                                break;
+                            if ((fourCc = ReadFourCc(brB)) != "lbil")
+                            { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected lbil, got={fourCc}"); break; }
+                            while(true) //this is LIST loop. Always starts with loop and determines the segment true data by the sizeof
+                            {
+                                if ((fourCc = ReadFourCc(brB)) != "LIST")
+                                { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected LIST, got={fourCc}"); break; }
+                                uint listBufferSize = brB.ReadUInt32();
+                                if(listBufferSize != 52)
+                                {
+                                    msB.Seek(listBufferSize, SeekOrigin.Current); //the other data is useless for us. We want the bands only.
+                                    //Actually there's pointer to DLS file, but who is going to replace the DLS in file when you can do it much easier
+                                    //with a mod manager/code modification. You can change the constant FF8.DLS to other filename somewhere above here. 
+                                    continue;
+                                }
+                                else
+                                {
+                                    string bandHeader = $"{ReadFourCc(brB)}{ReadFourCc(brB)}";
+                                    if(bandHeader!= "lbinbins")
+                                    { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: the band LIST reader got this magic: {bandHeader} instead of lbinbins"); break; }
+                                    uint sizeofDMUS_IO_INSTRUMENT = brB.ReadUInt32();
+                                    DMUS_IO_INSTRUMENT instrument = MakiExtended.ByteArrayToStructure<DMUS_IO_INSTRUMENT>(brB.ReadBytes((int)sizeofDMUS_IO_INSTRUMENT));
+                                    lbinbins.Add(instrument);
+                                    continue;
+                                }
+                            }
+                        }
+
+
                         break;
                     default:
                         break;
