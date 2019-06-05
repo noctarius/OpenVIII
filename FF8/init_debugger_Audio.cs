@@ -444,12 +444,18 @@ namespace FF8
         private static void FluidWorker_ProduceMid()
         {
             //NAudio.Midi.MidiFile midi = new NAudio.Midi.MidiFile("/home/griever/clairdelune.mid");
-            NAudio.Midi.MidiEventCollection mid = new NAudio.Midi.MidiEventCollection(1, 480);
+            NAudio.Midi.MidiEventCollection mid = new NAudio.Midi.MidiEventCollection(1, 360);
             mid.AddTrack();
             for(int i  = 0; i<lbinbins.Count; i++)
             {
                 var lbin = lbinbins[i];
-                NAudio.Midi.PatchChangeEvent patch = new NAudio.Midi.PatchChangeEvent(0, (int)lbin.dwPChannel, (int)lbin.dwPatch);
+                NAudio.Midi.PatchChangeEvent patch = new NAudio.Midi.PatchChangeEvent(0, (int)lbin.dwPChannel+1, (int)lbin.dwPatch&0xFF);
+            }
+            mid.AddEvent(new NAudio.Midi.TempoEvent((int)tetr.dblTempo, 0), 0);
+            for(int i =0; i<tims.Count; i++)
+            {
+                var tim = tims[i];
+                //NAudio.Midi.TimeSignatureEvent time = new NAudio.Midi.TimeSignatureEvent(tim.lTime, ,,tim);
             }
             for (int i = 0; i<seqt.Count; i++)
             {
@@ -459,7 +465,10 @@ namespace FF8
                 note = new NAudio.Midi.NoteEvent(ss.mtTime + ss.mtDuration, (int)ss.dwPChannel+1, NAudio.Midi.MidiCommandCode.NoteOff, ss.bByte1, ss.bByte2);
                 mid.AddEvent(note, 0);
             }
-            NAudio.Midi.MidiFile.Export("/home/griever/test.mid", mid); //DEBUG
+            NAudio.Midi.MidiFile.Export("D:/mid.mid", mid); //DEBUG
+            //fluid_synth_sfload(synth, "D:/GS.sf2", 1);
+            //fluid_player_add(player, "D:/mid.mid");
+            //fluid_player_play(player);
         }
 
         private static void FluidWorket_SetBanks()
@@ -660,7 +669,7 @@ namespace FF8
         public static void PlayMusic()
         {
             string ext = "";
-            bool bFakeLinux = false; //set to force linux behaviour on windows; To delete after Linux music playable
+            bool bFakeLinux = true; //set to force linux behaviour on windows; To delete after Linux music playable
             if (Memory.dicMusic[Memory.MusicIndex].Count > 0)
             {
                 ext = Path.GetExtension(Memory.dicMusic[Memory.MusicIndex][0]).ToLower();
@@ -687,10 +696,7 @@ namespace FF8
                         ReadSegmentFileManually(pt);
                         Console.WriteLine($"segh: {segh.mtLength}");
                     }
-                    if (MakiExtended.IsLinux)
-                    {
                         SynthPlay();
-                    }
                     
                     break;
             }
@@ -804,10 +810,10 @@ namespace FF8
         [StructLayout(LayoutKind.Sequential, Pack =1, Size =8)]
         struct DMUS_IO_TIMESIGNATURE_ITEM
         {
-            uint lTime;
-            byte bBeatsPerMeasure;
-            byte bBeat;
-            ushort wGridsPerBeat;
+            public uint lTime;
+            public byte bBeatsPerMeasure;
+            public byte bBeat;
+            public ushort wGridsPerBeat;
         }
 
         struct DMUS_IO_TEMPO_ITEM
@@ -878,7 +884,6 @@ namespace FF8
             byte bVolume;
             short nTranspose;
             uint dwChannelPriority;
-            short nPitchBendRange;
         }
 
         static DMUS_IO_SEGMENT_HEADER segh = new DMUS_IO_SEGMENT_HEADER();
