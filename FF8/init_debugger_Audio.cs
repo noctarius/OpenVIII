@@ -23,6 +23,7 @@ namespace FF8
         private static IntPtr driver;
         private static IntPtr synth;
         private static IntPtr settings;
+        private static IntPtr player;
         enum ThreadFluidState
         {
             /// <summary>
@@ -373,9 +374,11 @@ namespace FF8
             driver = new_fluid_audio_driver(settings, synth);
             string dlsPath = Path.Combine(Path.GetDirectoryName(music_pt), "FF8.dls");
             fluid_synth_sfload(synth, dlsPath, 1);
+            player = new_fluid_player(synth);
             GCHandle.Alloc(settings, GCHandleType.Pinned);
             GCHandle.Alloc(synth, GCHandleType.Pinned);
             GCHandle.Alloc(driver, GCHandleType.Pinned);
+            GCHandle.Alloc(player, GCHandleType.Pinned);
             System.Threading.Thread fluidThread = new System.Threading.Thread(new System.Threading.ThreadStart(FluidWorker));
             fluidThread.Start();
         }
@@ -409,21 +412,25 @@ namespace FF8
 
                         //We received the reset state. We have to clear all lists and helpers that were used for playing music.
                     case ThreadFluidState.reset:
-                        FluidWorker_Reset();
+                        //FluidWorker_Reset();
                         fluidState = ThreadFluidState.idle;
                         continue;
 
                     //We received the newSong state. We are resetting as in reset, but in the end we fall into playing
                     case ThreadFluidState.newSong:
                         FluidWorker_Reset();
-                        FluidWorket_SetTempo();
-                        FluidWorket_SetBanks();
+                        FluidWorker_ProduceMid();
+                        //FluidWorket_SetTempo();
+                        //FluidWorket_SetBanks();
+                        fluid_player_add(player, "/home/griever/test.mid");
+                        fluid_player_play(player);
                         fluidState = ThreadFluidState.playing;
                         continue;
 
                     //The most important state- it handles the real-time transmission to synth driver
                     case ThreadFluidState.playing:
-                        UpdateMusic();
+
+                        //UpdateMusic();
                         continue;
 
                     case ThreadFluidState.kill:
@@ -432,6 +439,27 @@ namespace FF8
                         break;
                 }
             }
+        }
+
+        private static void FluidWorker_ProduceMid()
+        {
+            //NAudio.Midi.MidiFile midi = new NAudio.Midi.MidiFile("/home/griever/clairdelune.mid");
+            NAudio.Midi.MidiEventCollection mid = new NAudio.Midi.MidiEventCollection(1, 480);
+            mid.AddTrack();
+            for(int i  = 0; i<lbinbins.Count; i++)
+            {
+                var lbin = lbinbins[i];
+                NAudio.Midi.PatchChangeEvent patch = new NAudio.Midi.PatchChangeEvent(0, (int)lbin.dwPChannel, (int)lbin.dwPatch);
+            }
+            for (int i = 0; i<seqt.Count; i++)
+            {
+                var ss = seqt[i];
+                NAudio.Midi.NoteEvent note = new NAudio.Midi.NoteEvent(ss.mtTime, (int)ss.dwPChannel+1, NAudio.Midi.MidiCommandCode.NoteOn, ss.bByte1, ss.bByte2);
+                mid.AddEvent(note, 0);
+                note = new NAudio.Midi.NoteEvent(ss.mtTime + ss.mtDuration, (int)ss.dwPChannel+1, NAudio.Midi.MidiCommandCode.NoteOff, ss.bByte1, ss.bByte2);
+                mid.AddEvent(note, 0);
+            }
+            NAudio.Midi.MidiFile.Export("/home/griever/test.mid", mid); //DEBUG
         }
 
         private static void FluidWorket_SetBanks()
@@ -460,7 +488,6 @@ namespace FF8
             {
                 fluidThreadKeys.Add(new fluidThreadKey() { channel = (int)key.dwPChannel, key = key.bByte1, time = (int)key.mtDuration });
                 fluid_synth_noteon(synth, (int)key.dwPChannel, key.bByte1, key.bByte2);
-                Console.WriteLine($"fluid_synth_noteon: {key.dwPChannel}, {key.bByte1}, {key.bByte2}");
                 fluidCurrentIndex++;
             }
             //BELOW COMMENTED CODE IS AWFUL OPTIMALIZED- Change to array with count of channels and then simply put the data in there
@@ -658,6 +685,7 @@ namespace FF8
                         while (fluidState != ThreadFluidState.idle)
                             ; //we are waiting for reset end on fluidThread
                         ReadSegmentFileManually(pt);
+                        Console.WriteLine($"segh: {segh.mtLength}");
                     }
                     if (MakiExtended.IsLinux)
                     {
