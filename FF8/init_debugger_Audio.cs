@@ -79,16 +79,25 @@ namespace FF8
         public static extern IntPtr new_fluid_player(IntPtr synth);
 
         [DllImport(fluidLibName)]
+        public static extern IntPtr delete_fluid_player(IntPtr player);
+
+        [DllImport(fluidLibName)]
         public static extern IntPtr new_fluid_audio_driver(IntPtr settings, IntPtr synth);
 
         [DllImport(fluidLibName)]
         public static extern int fluid_player_play(IntPtr player);
 
         [DllImport(fluidLibName)]
+        public static extern int fluid_player_stop(IntPtr player);
+
+        [DllImport(fluidLibName)]
         public static extern int fluid_player_join(IntPtr player);
 
         [DllImport(fluidLibName)]
         public static extern int fluid_player_add(IntPtr player, string mid);
+
+        [DllImport(fluidLibName)]
+        public static extern int fluid_player_add_mem(IntPtr player, byte[] mid, uint len); //use this one instead of file dumping!
 
         [DllImport(fluidLibName)]
         public static extern int fluid_synth_sfload(IntPtr synth, string sf2, int reset_presets);
@@ -422,7 +431,12 @@ namespace FF8
                         FluidWorker_ProduceMid();
                         //FluidWorket_SetTempo();
                         //FluidWorket_SetBanks();
-                        fluid_player_add(player, "/home/griever/test.mid");
+                        if(player != IntPtr.Zero)
+                        {
+                            delete_fluid_player(player);
+                            player = new_fluid_player(synth);
+                        }
+                        fluid_player_add(player, "D:/mid.mid");
                         fluid_player_play(player);
                         fluidState = ThreadFluidState.playing;
                         continue;
@@ -443,15 +457,16 @@ namespace FF8
 
         private static void FluidWorker_ProduceMid()
         {
-            //NAudio.Midi.MidiFile midi = new NAudio.Midi.MidiFile("/home/griever/clairdelune.mid");
             NAudio.Midi.MidiEventCollection mid = new NAudio.Midi.MidiEventCollection(1, 360);
             mid.AddTrack();
             for(int i  = 0; i<lbinbins.Count; i++)
             {
                 var lbin = lbinbins[i];
-                NAudio.Midi.PatchChangeEvent patch = new NAudio.Midi.PatchChangeEvent(0, (int)lbin.dwPChannel+1, (int)lbin.dwPatch&0xFF);
+                int patch_ = (int)(lbin.dwPatch & 0xFF); //MSB, LSB + patch on the least 8 bits
+                NAudio.Midi.PatchChangeEvent patch = new NAudio.Midi.PatchChangeEvent(0, (int)lbin.dwPChannel+1, patch_+1);
+                mid.AddEvent(patch, 0);
             }
-            mid.AddEvent(new NAudio.Midi.TempoEvent((int)tetr.dblTempo, 0), 0);
+            mid.AddEvent(new NAudio.Midi.TempoEvent((int)tetr.dblTempo*2000, 0), 0);
             for(int i =0; i<tims.Count; i++)
             {
                 var tim = tims[i];
@@ -466,9 +481,7 @@ namespace FF8
                 mid.AddEvent(note, 0);
             }
             NAudio.Midi.MidiFile.Export("D:/mid.mid", mid); //DEBUG
-            //fluid_synth_sfload(synth, "D:/GS.sf2", 1);
-            //fluid_player_add(player, "D:/mid.mid");
-            //fluid_player_play(player);
+
         }
 
         private static void FluidWorket_SetBanks()
@@ -756,6 +769,7 @@ namespace FF8
                 ffccMusic = null;
             }
             fluid_synth_all_notes_off(synth, -1);
+            fluid_player_stop(player);
             fluidState = ThreadFluidState.idle;
 
 
@@ -977,18 +991,18 @@ namespace FF8
                 {
                     case "cord": //Chord track list =[DONE]
                         if ((fourCc = ReadFourCc(br)) != "LIST")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected LIST, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected cord/LIST, got={fourCc}"); break; }
                         uint cordListChunkSize = br.ReadUInt32();
                         if ((fourCc = ReadFourCc(br)) != "cord")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected cord, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected cord/cord, got={fourCc}"); break; }
                         if ((fourCc = ReadFourCc(br)) != "crdh")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected crdh, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected cord/crdh, got={fourCc}"); break; }
                         fs.Seek(4, SeekOrigin.Current); //crdh size. It's always one DWORD, so...
                         uint crdhDword = br.ReadUInt32();
                         byte crdhRoot = (byte)(crdhDword >> 24);
                         uint crdhScale = crdhDword & 0xFFFFFF;
                         if ((fourCc = ReadFourCc(br)) != "crdb")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected crdb, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected cord/crdb, got={fourCc}"); break; }
                         uint crdbChunkSize = br.ReadUInt32();
                         crdh = MakiExtended.ByteArrayToStructure<DMUS_IO_CHORD>(br.ReadBytes((int)br.ReadUInt32()));
                         uint cSubChords = br.ReadUInt32();
@@ -998,7 +1012,7 @@ namespace FF8
                         break;
                     case "tetr":
                         if ((fourCc = ReadFourCc(br)) != "tetr")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected tetr, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected tetr/tetr, got={fourCc}"); break; }
                         uint tetrChunkSize = br.ReadUInt32();
                         uint tetrEntrySize = br.ReadUInt32();
                         fs.Seek(4, SeekOrigin.Current); //???
@@ -1011,17 +1025,17 @@ namespace FF8
                         break;
                     case "seqt": //Sequence Track Chunk
                         if ((fourCc = ReadFourCc(br)) != "seqt")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected seqt, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected seqt/seqt, got={fourCc}"); break; }
                         uint seqtChunkSize = br.ReadUInt32();
                         if ((fourCc = ReadFourCc(br)) != "evtl")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected evtl, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected seqt/evtl, got={fourCc}"); break; }
                         uint evtlChunkSize = br.ReadUInt32();
                         uint sequenceItemSize = br.ReadUInt32();
                         uint sequenceItemsCount = (evtlChunkSize - 4) / sequenceItemSize;
                         for (int k = 0; k < sequenceItemsCount; k++)
                             seqt.Add(MakiExtended.ByteArrayToStructure<DMUS_IO_SEQ_ITEM>(br.ReadBytes((int)sequenceItemSize)));
                         if ((fourCc = ReadFourCc(br)) != "curl")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected curl, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected seqt/curl, got={fourCc}"); break; }
                         uint curlChunkSize = br.ReadUInt32();
                         uint curveItemSize = br.ReadUInt32();
                         uint curvesItemCount = (curlChunkSize - 4) / curveItemSize;
@@ -1030,41 +1044,41 @@ namespace FF8
                         break;
                     case "tims": //Time Signature Track List  =[DONE]
                         if ((fourCc = ReadFourCc(br)) != "tims")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected tims, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected tims/tims, got={fourCc}"); break; }
                         uint timsChunkSize = br.ReadUInt32();
                         uint timsEntrySize = br.ReadUInt32();
-                        for (int n = 0; n < (timsChunkSize - 4) / 2; n++)
+                        for (int n = 0; n < (timsChunkSize - 4) / 8; n++)
                             tims.Add(MakiExtended.ByteArrayToStructure<DMUS_IO_TIMESIGNATURE_ITEM>(br.ReadBytes((int)timsEntrySize)));
                         break;
                     case "dmbt": //Band segment
                         fs.Seek(12, SeekOrigin.Current); //We are skipping RIFF and the segment size. Useless for us
                         if ((fourCc = ReadFourCc(br)) != "LIST")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected LIST, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected dmbt/LIST, got={fourCc}"); break; }
                         uint lbdlChunkSize = br.ReadUInt32();
                         if ((fourCc = ReadFourCc(br)) != "lbdl")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected lbdl, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected dmbt/lbdl, got={fourCc}"); break; }
                         if ((fourCc = ReadFourCc(br)) != "LIST")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected LIST, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected dmbt/LIST, got={fourCc}"); break; }
                         _ = br.ReadUInt32();
                         if ((fourCc = ReadFourCc(br)) != "lbnd")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected lbnd, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected dmbt/lbnd, got={fourCc}"); break; }
                         if ((fourCc = ReadFourCc(br)) != "bdih")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected bdih, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected dmbt/bdih, got={fourCc}"); break; }
                         fs.Seek(br.ReadUInt32(), SeekOrigin.Current);
                         if ((fourCc = ReadFourCc(br)) != "RIFF")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected RIFF, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected dmbt/RIFF, got={fourCc}"); break; }
                         _ = br.ReadUInt32();
 
 
                         //Band SEGMENT
                         if ((fourCc = ReadFourCc(br)) != "DMBD")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected DMBD, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected dmbt/DMBD, got={fourCc}"); break; }
                         if ((fourCc = ReadFourCc(br)) != "guid")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected guid, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected dmbt/guid, got={fourCc}"); break; }
                         fs.Seek(br.ReadUInt32(), SeekOrigin.Current); //No one cares for guid
 
                         if ((fourCc = ReadFourCc(br)) != "LIST")
-                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected LIST, got={fourCc}"); break; }
+                        { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected dmbt/LIST, got={fourCc}"); break; }
                         fs.Seek(br.ReadUInt32()+4, SeekOrigin.Current); //we skip the UNFOunam, we don't care for this too
                         uint lbilSegmentSize = br.ReadUInt32();
                         byte[] lbilSegment = br.ReadBytes((int)lbilSegmentSize);
@@ -1076,11 +1090,11 @@ namespace FF8
                             if (msB.Position == msB.Length)
                                 break;
                             if ((fourCc = ReadFourCc(brB)) != "lbil")
-                            { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected lbil, got={fourCc}"); break; }
+                            { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected dmbt/lbil, got={fourCc}"); break; }
                             while(true) //this is LIST loop. Always starts with loop and determines the segment true data by the sizeof
                             {
                                 if ((fourCc = ReadFourCc(brB)) != "LIST")
-                                { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected LIST, got={fourCc}"); break; }
+                                { if (msB.Position == msB.Length) break; else { Console.WriteLine($"init_debugger_Audio::ReadSegmentForm: expected dmbt/LIST, got={fourCc}"); break; } } 
                                 uint listBufferSize = brB.ReadUInt32();
                                 if(listBufferSize != 52)
                                 {
