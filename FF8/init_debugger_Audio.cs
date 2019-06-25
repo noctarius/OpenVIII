@@ -404,6 +404,8 @@ namespace FF8
         private static int fluidCurrentIndex;
         private static List<fluidThreadKey> fluidThreadKeys;
         private const int fluidTimeFrame = 1; //test
+        private const int DMUS_PPQ = 768; //DirectMusic PulsePerQuarterNote
+        private const int DMUS_MusicTimeMilisecond = 60000000; //not really sure why 60 000 000 instead of 60 000, but it works
         private static float fluidDivider = 1000f; //test
         static void FluidWorker()
         {
@@ -457,16 +459,16 @@ namespace FF8
 
         private static void FluidWorker_ProduceMid()
         {
-            NAudio.Midi.MidiEventCollection mid = new NAudio.Midi.MidiEventCollection(1, 360);
+            NAudio.Midi.MidiEventCollection mid = new NAudio.Midi.MidiEventCollection(1, DMUS_PPQ);
             mid.AddTrack();
             for(int i  = 0; i<lbinbins.Count; i++)
             {
                 var lbin = lbinbins[i];
                 int patch_ = (int)(lbin.dwPatch & 0xFF); //MSB, LSB + patch on the least 8 bits
-                NAudio.Midi.PatchChangeEvent patch = new NAudio.Midi.PatchChangeEvent(0, (int)lbin.dwPChannel+1, patch_+1);
+                NAudio.Midi.PatchChangeEvent patch = new NAudio.Midi.PatchChangeEvent(0, (int)lbin.dwPChannel+1, patch_);
                 mid.AddEvent(patch, 0);
             }
-            mid.AddEvent(new NAudio.Midi.TempoEvent((int)tetr.dblTempo*2000, 0), 0);
+            mid.AddEvent(new NAudio.Midi.TempoEvent((int)(DMUS_MusicTimeMilisecond / tetr.dblTempo), 0), 0);
             for(int i =0; i<tims.Count; i++)
             {
                 var tim = tims[i];
