@@ -124,6 +124,7 @@ namespace FF8
         public static extern int fluid_synth_program_reset(IntPtr synth);
 #endif
 
+        private static byte[] midBuffer;
         private static byte[] getBytes(object aux)
         {
             int length = Marshal.SizeOf(aux);
@@ -438,7 +439,7 @@ namespace FF8
                             delete_fluid_player(player);
                             player = new_fluid_player(synth);
                         }
-                        fluid_player_add(player, "D:/mid.mid");
+                        fluid_player_add_mem(player, midBuffer, (uint)midBuffer.Length);
                         fluid_player_play(player);
                         fluidState = ThreadFluidState.playing;
                         continue;
@@ -482,8 +483,10 @@ namespace FF8
                 note = new NAudio.Midi.NoteEvent(ss.mtTime + ss.mtDuration, (int)ss.dwPChannel+1, NAudio.Midi.MidiCommandCode.NoteOff, ss.bByte1, ss.bByte2);
                 mid.AddEvent(note, 0);
             }
-            NAudio.Midi.MidiFile.Export("D:/mid.mid", mid); //DEBUG
-
+            MemoryStream ms = new MemoryStream();
+            NAudio.Midi.MidiFile.Export(ms,mid);
+            midBuffer = ms.ToArray();
+            ms.Dispose();
         }
 
         private static void FluidWorket_SetBanks()
